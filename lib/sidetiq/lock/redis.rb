@@ -15,7 +15,12 @@ module Sidetiq
 
       def initialize(key, timeout = Sidetiq.config.lock_expire)
         @key = extract_key(key)
-        @timeout = timeout
+
+        if Sidetiq.millisecond_precision?
+          @timeout = timeout
+        else
+          @timeout = timeout > 1000 ? timeout / 1000 : 1
+        end
       end
 
       def synchronize
@@ -54,12 +59,17 @@ module Sidetiq
       def lock
         Sidekiq.redis do |redis|
           acquired = false
+          millis = Sidetiq.millisecond_precision? # Call outside of pipeline
 
           watch(redis, key) do
             if !redis.exists(key)
               acquired = !!redis.multi do |multi|
                 meta = MetaData.for_new_lock(key)
-                multi.psetex(key, timeout, meta.to_json)
+                if millis
+                  multi.psetex(key, timeout, meta.to_json)
+                else
+                  multi.setex(key, timeout, meta.to_json)
+                end
               end
             end
           end
